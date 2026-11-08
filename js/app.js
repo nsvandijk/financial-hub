@@ -337,7 +337,6 @@
         The app can only see the file it creates, not the rest of your Drive.</p></div>
         <button class="btn primary" data-click="sign-in">Sign in with Google</button>
       </div>
-      <div class="choices">${exampleChoice}</div>
     </section>`;
   }
 
