@@ -7,5 +7,5 @@
  * for it to be in public code.
  */
 const CONFIG = {
-  GOOGLE_CLIENT_ID: '',
+  GOOGLE_CLIENT_ID: '978884371905-cfujk2uboj1q2j1lqnv3ahhau8mkhtjc.apps.googleusercontent.com',
 };
