@@ -1,6 +1,6 @@
 # Financial Hub
 
-A personal finance overview: income, fixed costs, subscriptions, budgets, savings goals and spending insights.
+A personal finance overview: income, fixed costs, subscriptions, budgets, savings goals, net worth and spending insights.
 A static web app (hosted on GitHub Pages) that runs in the browser on your PC, Mac and phone.
 You sign in with Google and your data is saved as one file in **your own Google Drive** (`financial-hub-data.json`).
 The code is public; your data never is.
@@ -39,6 +39,7 @@ Open **Log month** and:
 - change a fixed amount only if it was different this month (e.g. a higher energy bill)
 - add one-offs (tax refund, freelance job, big purchase)
 - log what you moved to each savings goal
+- note your account balances (bank, savings, investments, collectibles) for the net worth overview
 
 **Raise or price increase?** Edit the item in *Fixed & subscriptions* and set "applies from". Earlier months keep the old amount.
 **Cancelled a subscription?** Use **Stop**. It disappears from future months but stays in your history.

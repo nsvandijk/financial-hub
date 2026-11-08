@@ -147,5 +147,103 @@ const Charts = (() => {
     });
   }
 
-  return { bars };
+  /**
+   * Single-series line chart with a soft area underneath, a crosshair and tooltip.
+   * opts: { labels, fullLabels, values, color, name, height, format, axisFormat, tooltipExtra(i) }
+   */
+  let gradientId = 0;
+  function line(container, opts) {
+    const { labels, values, color, height = 220, format = String, axisFormat = String } = opts;
+    const fullLabels = opts.fullLabels || labels;
+    container.innerHTML = '';
+    container.classList.add('chart');
+    const plot = document.createElement('div');
+    plot.className = 'chart-plot';
+    container.appendChild(plot);
+
+    const width = Math.max(280, container.clientWidth);
+    const m = { top: 14, right: 14, bottom: 26, left: 54 };
+    const pw = width - m.left - m.right;
+    const ph = height - m.top - m.bottom;
+
+    let max = Math.max(...values), min = Math.min(...values);
+    if (max === min) { max += 1; min -= 1; }
+    const step = niceStep((max - min) / 4);
+    const top = Math.ceil(max / step) * step;
+    const bottom = Math.floor(min / step) * step;
+    const y = v => m.top + ((top - v) / (top - bottom)) * ph;
+    const n = values.length;
+    const x = i => m.left + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
+
+    const svg = svgEl('svg', { width, height, viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': `${opts.name || 'Value'} per month` }, plot);
+
+    for (let v = bottom; v <= top + step / 1000; v += step) {
+      const yy = Math.round(y(v)) + 0.5;
+      svgEl('line', { x1: m.left, x2: width - m.right, y1: yy, y2: yy, class: 'grid-line' }, svg);
+      const t = svgEl('text', { x: m.left - 8, y: yy + 4, 'text-anchor': 'end', class: 'tick' }, svg);
+      t.textContent = axisFormat(Math.abs(v) < step / 1000 ? 0 : v);
+    }
+
+    const id = `area-grad-${++gradientId}`;
+    const defs = svgEl('defs', {}, svg);
+    const grad = svgEl('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+    const s1 = svgEl('stop', { offset: '0%' }, grad); s1.style.stopColor = color; s1.style.stopOpacity = 0.22;
+    const s2 = svgEl('stop', { offset: '100%' }, grad); s2.style.stopColor = color; s2.style.stopOpacity = 0;
+
+    const pts = values.map((v, i) => [x(i), y(v)]);
+    const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]},${p[1]}`).join('');
+    const area = svgEl('path', { d: `${d}L${pts[n - 1][0]},${m.top + ph}L${pts[0][0]},${m.top + ph}Z` }, svg);
+    area.style.fill = `url(#${id})`;
+    const path = svgEl('path', { d, class: 'line-path' }, svg);
+    path.style.stroke = color;
+
+    // last value: a dot with a surface ring
+    const last = svgEl('circle', { cx: pts[n - 1][0], cy: pts[n - 1][1], r: 4.5, class: 'line-dot' }, svg);
+    last.style.fill = color;
+
+    const labelEvery = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(pw / 46))));
+    labels.forEach((lab, i) => {
+      if ((n - 1 - i) % labelEvery !== 0) return;
+      const t = svgEl('text', { x: x(i), y: height - 8, 'text-anchor': n === 1 ? 'middle' : i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle', class: 'tick' }, svg);
+      t.textContent = lab;
+    });
+
+    const cross = svgEl('line', { y1: m.top, y2: m.top + ph, class: 'crosshair' }, svg);
+    const hoverDot = svgEl('circle', { r: 4.5, class: 'line-dot' }, svg);
+    hoverDot.style.fill = color;
+    cross.style.display = hoverDot.style.display = 'none';
+
+    const tip = document.createElement('div');
+    tip.className = 'chart-tip';
+    tip.hidden = true;
+    plot.appendChild(tip);
+
+    const colW = n === 1 ? pw : pw / (n - 1);
+    values.forEach((v, i) => {
+      const hit = svgEl('rect', {
+        x: Math.max(m.left - 6, x(i) - colW / 2), y: m.top, width: colW, height: ph, class: 'hit', tabindex: 0,
+        'aria-label': `${fullLabels[i]}: ${format(v)}`,
+      }, svg);
+      const show = () => {
+        cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i));
+        hoverDot.setAttribute('cx', x(i)); hoverDot.setAttribute('cy', y(v));
+        cross.style.display = hoverDot.style.display = '';
+        const extra = opts.tooltipExtra ? `<div class="tip-extra">${escapeHtml(opts.tooltipExtra(i))}</div>` : '';
+        tip.innerHTML = `<div class="tip-title">${escapeHtml(fullLabels[i])}</div>
+          <div class="tip-row"><span class="swatch" style="background:${color}"></span><span>${escapeHtml(opts.name || '')}</span><b>${escapeHtml(format(v))}</b></div>${extra}`;
+        tip.hidden = false;
+        const tw = tip.offsetWidth;
+        tip.style.left = `${Math.min(Math.max(4, x(i) - tw / 2), width - tw - 4)}px`;
+        tip.style.top = `${Math.max(0, y(v) - tip.offsetHeight - 14)}px`;
+      };
+      const hide = () => { cross.style.display = hoverDot.style.display = 'none'; tip.hidden = true; };
+      hit.addEventListener('mouseenter', show);
+      hit.addEventListener('mouseleave', hide);
+      hit.addEventListener('focus', show);
+      hit.addEventListener('blur', hide);
+      hit.addEventListener('click', show);
+    });
+  }
+
+  return { bars, line };
 })();

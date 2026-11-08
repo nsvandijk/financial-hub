@@ -74,7 +74,25 @@ const Example = (() => {
       };
     }
 
-    return { items, goals, months };
+    // Net worth: a few accounts with month-end balances
+    const accounts = [
+      { id: 'exa1', name: 'Current account', type: 'bank', note: '', closedMonth: null },
+      { id: 'exa2', name: 'Savings account', type: 'savings', note: 'Emergency fund lives here', closedMonth: null },
+      { id: 'exa3', name: 'ETF portfolio', type: 'investment', note: 'Monthly index fund', closedMonth: null },
+      { id: 'exa4', name: 'Pokémon cards', type: 'collectible', note: 'Estimated value', closedMonth: null },
+    ];
+    let current = 1850, savings = 3500, etf = 7400, cards = 1150;
+    for (let i = 0; i <= 7; i++) {
+      const key = Calc.addMonths(start, i);
+      current = round(current + (rand() - 0.5) * 380);
+      savings = round(savings + 300 + (i >= 3 ? 200 : 100));
+      etf = round(etf * (1 + (rand() - 0.38) * 0.05) + 150);
+      const b = { exa1: current, exa2: savings, exa3: etf };
+      if (i % 3 === 0) { cards = round(cards * (1 + (rand() - 0.3) * 0.12)); b.exa4 = cards; } // re-valued every few months
+      months[key].balances = b;
+    }
+
+    return { items, goals, months, accounts, settings: {} };
   }
 
   return { build };

@@ -158,5 +158,56 @@ const Calc = (() => {
     };
   }
 
-  return { FREQ_MONTHS, num, monthKey, addMonths, diff, label, isActive, isDue, perMonth, month, firstMonth, history, goalProgress };
+  // ---- net worth ----
+  // Balances are logged per month in months[key].balances = { accountId: amount }.
+  // An account keeps its last logged balance until you log a new one
+  // (handy for things you only re-value now and then, like collectibles).
+  function netWorth(data, key) {
+    const accounts = data.accounts || [];
+    const keys = Object.keys(data.months).filter(k => k <= key).sort();
+    const rows = [];
+    for (const account of accounts) {
+      if (account.closedMonth && key > account.closedMonth) continue;
+      let value = null;
+      let updated = null;
+      for (const k of keys) {
+        const b = data.months[k].balances;
+        if (b && Object.prototype.hasOwnProperty.call(b, account.id)) { value = num(b[account.id]); updated = k; }
+      }
+      if (value != null) rows.push({ account, value, updated });
+    }
+    let assets = 0, debts = 0;
+    const byType = {};
+    for (const r of rows) {
+      if (r.account.type === 'debt') debts += r.value;
+      else assets += r.value;
+      byType[r.account.type] = (byType[r.account.type] || 0) + r.value;
+    }
+    return { key, total: assets - debts, assets, debts, byType, rows, has: rows.length > 0 };
+  }
+
+  /** The first month with any logged balance. */
+  function firstBalanceMonth(data) {
+    const ks = Object.keys(data.months).filter(k => {
+      const b = data.months[k].balances;
+      return b && Object.keys(b).length;
+    }).sort();
+    return ks[0] || null;
+  }
+
+  function netWorthHistory(data, key, n = 12) {
+    const first = firstBalanceMonth(data);
+    if (!first) return [];
+    const out = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const k = addMonths(key, -i);
+      if (k >= first) out.push(netWorth(data, k));
+    }
+    return out;
+  }
+
+  return {
+    FREQ_MONTHS, num, monthKey, addMonths, diff, label, isActive, isDue, perMonth, month, firstMonth, history, goalProgress,
+    netWorth, netWorthHistory, firstBalanceMonth,
+  };
 })();

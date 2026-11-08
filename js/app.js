@@ -60,7 +60,7 @@
   }));
 
   function emptyData() {
-    return { schema: 1, currency: 'EUR', categories: makeCategories(), items: [], months: {}, goals: [], updatedAt: new Date().toISOString() };
+    return { schema: 1, currency: 'EUR', categories: makeCategories(), items: [], months: {}, goals: [], accounts: [], settings: {}, updatedAt: new Date().toISOString() };
   }
   function exampleData() {
     const d = emptyData();
@@ -79,6 +79,8 @@
       items: Array.isArray(d.items) ? d.items : [],
       months: d.months && typeof d.months === 'object' ? d.months : {},
       goals: Array.isArray(d.goals) ? d.goals : [],
+      accounts: Array.isArray(d.accounts) ? d.accounts : [],
+      settings: d.settings && typeof d.settings === 'object' ? d.settings : {},
       isExample: !!d.isExample,
       updatedAt: d.updatedAt || new Date().toISOString(),
     };
@@ -89,6 +91,7 @@
     e.variable ||= {};
     e.extras ||= [];
     e.contributions ||= {};
+    e.balances ||= {};
     return e;
   }
   const catName = id => (state.data.categories.find(c => c.id === id) || {}).name || 'Uncategorized';
@@ -237,19 +240,19 @@
     renderStatus();
     const main = $('#view');
     const tabs = $('#tabs');
-    const nav = $('#month-nav');
 
     if (!state.data) {
       tabs.hidden = true;
-      nav.hidden = true;
       main.innerHTML = welcomeView();
       return;
     }
 
     tabs.hidden = false;
-    tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === state.tab));
-    nav.hidden = !['overview', 'month', 'recurring', 'budgets', 'goals'].includes(state.tab);
-    $('#month-label').textContent = Calc.label(state.month);
+    tabs.querySelectorAll('button').forEach(b => {
+      const on = b.dataset.tab === state.tab;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
 
     const mounts = [];
     const view = VIEWS[state.tab] || VIEWS.overview;
@@ -339,8 +342,31 @@
   }
 
   // --------------------------------------------------------------- overview
-  function kpi(label, value, sub = '') {
-    return `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="kpi-sub">${sub}</div></div>`;
+  function kpi(label, value, sub = '', opts = {}) {
+    const sw = opts.color ? `<span class="swatch" style="background:${opts.color}"></span>` : '';
+    const link = opts.tab ? ` link" data-click="tab" data-tab="${opts.tab}" role="button" tabindex="0` : '';
+    return `<div class="kpi${link}"><div class="kpi-label">${sw}${label}</div><div class="kpi-value">${value}</div><div class="kpi-sub">${sub}</div></div>`;
+  }
+
+  /** The month picker shown at the top of month-based pages. */
+  function monthSwitch() {
+    const isNow = state.month === Calc.monthKey();
+    return `<div class="month-switch" role="group" aria-label="Choose month">
+      <button class="icon-btn" data-click="prev-month" aria-label="Previous month">‹</button>
+      <span class="label">${Calc.label(state.month)}</span>
+      <button class="icon-btn" data-click="next-month" aria-label="Next month">›</button>
+      ${isNow ? '' : '<button class="btn ghost small today" data-click="this-month">Today</button>'}
+    </div>`;
+  }
+  function pageHead(title, sub = '', withMonth = true, cls = 'page-title') {
+    return `<header class="page-head"><div><h1 class="${cls}">${title}</h1>${sub ? `<p class="page-sub">${sub}</p>` : ''}</div>
+      ${withMonth ? monthSwitch() : ''}</header>`;
+  }
+  function greeting() {
+    const h = new Date().getHours();
+    const part = h < 6 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    const name = (state.data.settings.name || '').trim();
+    return name ? `${part}, ${esc(name)}` : part;
   }
   function delta(cur, prev, upIsGood, prevKey, formatter = fmt0) {
     if (!prev) return '';
@@ -370,13 +396,35 @@
         </ol>`, 'onboarding');
     }
 
+    const isNow = key === Calc.monthKey();
+    html = pageHead(greeting(), isNow ? `Here's how ${monthName(key)} is going.` : `Looking back at ${Calc.label(key)}.`, true, 'greeting') + html;
+
+    // Hero: what you saved this month, with the last 6 months as small bars
+    const recent = Calc.history(d, key, 6);
+    const maxAbs = Math.max(1, ...recent.map(h => Math.abs(h.saved)));
+    const spark = recent.length >= 2 ? `<div class="spark" aria-hidden="true">${recent.map(h => `
+        <div class="spark-col ${h.key === key ? 'current' : ''}" title="${Calc.label(h.key)}: ${fmt0(h.saved)}">
+          <div class="spark-bar ${h.saved < 0 ? 'neg' : ''}" style="--f:${Math.max(0.04, Math.abs(h.saved) / maxAbs).toFixed(3)}"></div>
+          <span>${monthShort(h.key)}</span></div>`).join('')}</div>` : '';
     const rateDelta = (m.rate != null && p.rate != null)
       ? delta(m.rate * 100, p.rate * 100, true, prevKey, v => `${Math.round(v)} pts`) : '';
-    html += `<section class="kpis">
-      ${kpi('Income', fmt(m.income), delta(m.income, p.income, true, prevKey))}
-      ${kpi('Expenses', fmt(m.expenses), delta(m.expenses, p.expenses, false, prevKey))}
-      ${kpi(m.saved >= 0 ? 'Saved' : 'Overspent', fmt(Math.abs(m.saved)), delta(m.saved, p.saved, true, prevKey))}
-      ${kpi('Savings rate', pct(m.rate), rateDelta)}
+    const nw = Calc.netWorth(d, key);
+    const nwPrev = Calc.netWorth(d, prevKey);
+    const thirdKpi = nw.has
+      ? kpi('Net worth', fmt0(nw.total), nwPrev.has ? delta(nw.total, nwPrev.total, true, prevKey) : '', { color: 'var(--series-4)', tab: 'networth' })
+      : kpi('Savings rate', pct(m.rate), rateDelta);
+    html += `<section class="hero-grid">
+      <div class="hero">
+        <div class="hero-label">${m.saved >= 0 ? 'Saved' : 'Overspent'} in ${monthName(key)}</div>
+        <div class="hero-value">${fmt0(Math.abs(m.saved))}</div>
+        <div class="hero-meta">${m.rate != null ? `<span>${pct(m.rate)} of your income</span>` : ''}${delta(m.saved, p.saved, true, prevKey)}</div>
+        ${spark}
+      </div>
+      <div class="kpi-stack">
+        ${kpi('Income', fmt(m.income), delta(m.income, p.income, true, prevKey), { color: 'var(--series-1)' })}
+        ${kpi('Expenses', fmt(m.expenses), delta(m.expenses, p.expenses, false, prevKey), { color: 'var(--series-2)' })}
+        ${thirdKpi}
+      </div>
     </section>`;
 
     if (!m.logged && m.income + m.expenses > 0) {
@@ -413,7 +461,7 @@
         });
         Charts.bars($('#chart-saved'), {
           labels, fullLabels: full, format: fmt, axisFormat: v => compact.format(v), height: 170,
-          series: [{ name: 'Saved', color: 'var(--series-3)', values: hist.map(h => h.saved) }],
+          series: [{ name: 'Saved', color: 'var(--series-4)', values: hist.map(h => h.saved) }],
           tooltipExtra: i => `Savings rate: ${pct(hist[i].rate)}`,
         });
       });
@@ -626,8 +674,16 @@
 
     const note = card('Notes', `<textarea id="month-note" data-change="note" rows="2" placeholder="Anything special this month?">${esc(entry.note || '')}</textarea>`);
 
-    return `<h1 class="page-title">${Calc.label(key)}</h1>${summary}
-      <div class="grid-2"><div>${income}${variable}</div><div>${fixed}${extras}${goals}${note}</div></div>`;
+    const nw = Calc.netWorth(d, key);
+    const openAccounts = (d.accounts || []).filter(a => !a.closedMonth || key <= a.closedMonth);
+    const balances = card('Account balances', openAccounts.length ? `
+      <p class="hint">What's in each account at the end of the month. Estimates are fine for investments and collectibles.
+      Leave an account empty to keep its last value.</p>
+      ${openAccounts.map(a => balanceRow(a, entry, nw)).join('')}` :
+      `<p class="muted">Track your net worth by adding your accounts. <button class="btn small" data-click="tab" data-tab="networth">Set up net worth</button></p>`);
+
+    return `${pageHead('Log your month', 'A few minutes once a month keeps everything up to date.')}${summary}
+      <div class="grid-2"><div>${income}${variable}${balances}</div><div>${fixed}${extras}${goals}${note}</div></div>`;
   }
 
   // ------------------------------------------------------------- recurring
@@ -657,9 +713,7 @@
           <button class="btn ghost small danger" data-click="delete-item" data-id="${i.id}" aria-label="Delete ${esc(i.name)}">Delete</button>
         </td></tr>`).join('')}</tbody></table></div>` : `<p class="muted">${emptyText}</p>`;
 
-    return `<h1 class="page-title">Fixed items &amp; subscriptions</h1>
-      <p class="lead">Everything that comes back regularly. These are counted automatically each month, so you only enter them once.
-      Showing what's active in <b>${Calc.label(key)}</b>.</p>
+    return `${pageHead('Fixed &amp; subscriptions', 'Everything that comes back regularly. These are counted automatically each month, so you only enter them once.')}
       <section class="kpis">
         ${kpi('Fixed income', `${fmt0(inc)}<small>/mo</small>`)}
         ${kpi('Fixed costs', `${fmt0(fix)}<small>/mo</small>`)}
@@ -788,9 +842,7 @@
       </tr>`;
     }).join('');
 
-    return `<h1 class="page-title">Budgets &amp; categories</h1>
-      <p class="lead">Set a monthly limit for the categories you want to keep an eye on. Leave it empty for no budget.
-      The 3-month average shows what you <i>actually</i> spend, which makes a good starting point for a realistic budget.</p>
+    return `${pageHead('Budgets', 'Set a monthly limit for the categories you want to keep an eye on. The 3-month average shows what you <i>actually</i> spend, a good starting point for a realistic budget.')}
       <section class="kpis">
         ${kpi('Total budgeted', fmt0(totalBudget))}
         ${kpi('Fixed income', fmt0(fixedIncome))}
@@ -829,8 +881,7 @@
         ${status}
       </section>`;
     }).join('');
-    return `<h1 class="page-title">Savings goals</h1>
-      <p class="lead">Give your savings a purpose. Log how much you put towards each goal in <b>Log month</b>.</p>
+    return `${pageHead('Savings goals', 'Give your savings a purpose. Log how much you put towards each goal in <b>Log</b>.')}
       <div class="toolbar"><button class="btn primary" data-click="add-goal">+ New goal</button></div>
       ${d.goals.length ? `<div class="grid-2">${cards}</div>` : card('', `<p class="muted">No goals yet. Ideas: an emergency fund (3–6 months of expenses), a holiday, a new laptop.</p>`)}`;
   }
@@ -874,7 +925,16 @@
       conn = `<div class="status-line warn">${icon('warn')} Google sign-in isn't set up yet, so data is only saved on this device. Add your client ID to <code>js/config.js</code>.</div>`;
     }
 
-    return `<h1 class="page-title">Data &amp; sync</h1>
+    const theme = getTheme();
+    return `${pageHead('Settings', '', false)}
+      <div class="grid-2">
+        ${card('You', `<div class="setting-row"><div><b>Your first name</b><p>Used for the greeting on the home page.</p></div>
+          <input id="set-name" data-change="set-name" value="${esc(state.data.settings.name || '')}" placeholder="e.g. Nick" autocomplete="given-name"></div>`)}
+        ${card('Appearance', `<div class="setting-row"><div><b>Theme</b><p>Auto follows your device's light/dark setting.</p></div>
+          <div class="segmented" role="group" aria-label="Theme">
+            ${['auto', 'light', 'dark'].map(t => `<button data-click="set-theme" data-theme="${t}" class="${theme === t ? 'active' : ''}" aria-pressed="${theme === t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}
+          </div></div>`)}
+      </div>
       ${card('Google Drive sync', `${conn}
         <div class="explain">
           <h3>How it works on all your devices</h3>
@@ -900,7 +960,155 @@
         <p class="muted small">Both of these replace your current data${state.conn !== 'local' ? ', including the copy in Google Drive' : ''}. Export a backup first if you want to keep it.</p>`)}`;
   }
 
-  const VIEWS = { overview: overviewView, month: monthView, recurring: recurringView, budgets: budgetsView, goals: goalsView, data: dataView };
+  // -------------------------------------------------------------- theme
+  const THEME_KEY = 'financialHub.theme';
+  function getTheme() {
+    try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; }
+  }
+  function setTheme(t) {
+    try { if (t === 'auto') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch (e) { /* ignore */ }
+    if (t === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+  }
+
+  // ------------------------------------------------------------- net worth
+  // Each type has a fixed chart color slot, in the order the palette was validated for
+  // (so neighbours in the composition bar are always easy to tell apart).
+  const ACCOUNT_TYPES = [
+    { id: 'bank', label: 'Bank account', plural: 'Bank accounts', color: 'var(--series-1)' },
+    { id: 'collectible', label: 'Collectibles', plural: 'Collectibles', color: 'var(--series-2)' },
+    { id: 'investment', label: 'Investments', plural: 'Investments', color: 'var(--series-3)' },
+    { id: 'savings', label: 'Savings account', plural: 'Savings', color: 'var(--series-4)' },
+    { id: 'other', label: 'Other asset', plural: 'Other', color: 'var(--series-5)' },
+    { id: 'debt', label: 'Debt / loan', plural: 'Debts', color: 'var(--muted)' },
+  ];
+  const typeOf = id => ACCOUNT_TYPES.find(t => t.id === id) || ACCOUNT_TYPES[4];
+
+  function balanceRow(a, entry, nw) {
+    const id = `bal-${a.id}`;
+    const t = typeOf(a.type);
+    const logged = entry.balances && Object.prototype.hasOwnProperty.call(entry.balances, a.id);
+    const row = nw.rows.find(r => r.account.id === a.id);
+    const carried = !logged && row ? row.value : null;
+    return `<div class="line-row">
+      <span class="swatch" style="background:${t.color}"></span>
+      <label for="${id}">${esc(a.name)} <span class="muted small">${t.label}</span>
+        ${carried != null ? `<span class="pill">last: ${fmt0(carried)} (${monthShort(row.updated)})</span>` : ''}</label>
+      <div class="amount-input"><span>€</span><input id="${id}" inputmode="decimal" autocomplete="off" placeholder="${carried != null ? esc(toInput(carried)) : '0'}"
+        data-change="balance" data-id="${a.id}" value="${logged ? toInput(entry.balances[a.id]) : ''}"></div>
+    </div>`;
+  }
+
+  function networthView(mounts) {
+    const d = state.data;
+    const key = state.month;
+    const prevKey = Calc.addMonths(key, -1);
+    const nw = Calc.netWorth(d, key);
+    const prev = Calc.netWorth(d, prevKey);
+    const hist = Calc.netWorthHistory(d, key, 12);
+    const entry = d.months[key] || {};
+    const head = pageHead('Net worth', 'Everything you own minus what you owe. Update your balances once a month.');
+
+    if (!d.accounts.length) {
+      return `${head}${card('', `<div class="welcome-inline">
+        <h2>Start tracking your net worth</h2>
+        <p class="page-sub">Add the things you own: bank and savings accounts, investments, and collectibles like your Pokémon cards.
+        Each month you note the balances, and the hub shows how your wealth grows over time.</p>
+        <div class="button-row"><button class="btn primary" data-click="add-account">+ Add your first account</button></div></div>`)}`;
+    }
+
+    const first = hist[0];
+    const sinceFirst = first && hist.length > 1 ? nw.total - first.total : null;
+    const m = Calc.month(d, key);
+    const change = prev.has ? nw.total - prev.total : null;
+    let explainer = '';
+    if (change != null && m.logged) {
+      const other = change - m.saved;
+      explainer = `<p class="muted small">This month you saved ${fmt0(m.saved)} from your income.
+        ${Math.abs(other) >= 1 ? `The other ${other > 0 ? '+' : '−'}${fmt0(Math.abs(other))} came from things like investment returns, value changes or moving money in or out.` : ''}</p>`;
+    }
+
+    const hero = `<section class="hero nw-hero-card">
+      <div class="nw-hero">
+        <div>
+          <div class="hero-label">Net worth · end of ${monthName(key)}</div>
+          <div class="hero-value">${fmt0(nw.total)}</div>
+          <div class="hero-meta">${change != null ? delta(nw.total, prev.total, true, prevKey) : ''}
+            ${sinceFirst != null ? `<span>${sinceFirst >= 0 ? '+' : '−'}${fmt0(Math.abs(sinceFirst))} since ${monthShort(first.key)}</span>` : ''}</div>
+          ${explainer}
+        </div>
+        <div>${hist.length >= 2 ? '<div id="chart-networth"></div>' : '<p class="muted small">Your net worth chart appears after two months of balances.</p>'}</div>
+      </div>
+    </section>`;
+    if (hist.length >= 2) {
+      mounts.push(() => Charts.line($('#chart-networth'), {
+        labels: hist.map(h => monthShort(h.key)), fullLabels: hist.map(h => Calc.label(h.key)),
+        values: hist.map(h => h.total), color: 'var(--series-4)', name: 'Net worth',
+        format: fmt0, axisFormat: v => compact.format(v), height: 210,
+      }));
+    }
+
+    // Composition: assets only, in fixed palette order
+    const assetTypes = ACCOUNT_TYPES.filter(t => t.id !== 'debt' && (nw.byType[t.id] || 0) > 0);
+    const composition = nw.assets > 0 ? `
+      <div class="composition" role="img" aria-label="Assets by type">
+        ${assetTypes.map(t => `<div class="comp-seg" style="flex:${nw.byType[t.id]};background:${t.color}" title="${t.plural}: ${fmt0(nw.byType[t.id])}"></div>`).join('')}
+      </div>
+      <div class="comp-legend">
+        ${assetTypes.map(t => `<div class="comp-row"><span class="swatch" style="background:${t.color}"></span>
+          <span class="grow">${t.plural}</span><span class="num">${fmt0(nw.byType[t.id])}</span>
+          <span class="num muted" style="width:44px">${pct(nw.byType[t.id] / nw.assets)}</span></div>`).join('')}
+        ${nw.debts > 0 ? `<div class="comp-row"><span class="swatch" style="background:var(--muted)"></span>
+          <span class="grow">Debts</span><span class="num">−${fmt0(nw.debts)}</span><span class="num muted" style="width:44px"></span></div>` : ''}
+      </div>` : '<p class="muted">Log your balances to see what your net worth is made of.</p>';
+
+    const open = d.accounts.filter(a => !a.closedMonth || key <= a.closedMonth);
+    const closed = d.accounts.filter(a => a.closedMonth && key > a.closedMonth);
+    const accounts = `${open.map(a => {
+      const t = typeOf(a.type);
+      const row = nw.rows.find(r => r.account.id === a.id);
+      const logged = entry.balances && Object.prototype.hasOwnProperty.call(entry.balances, a.id);
+      const id = `nwbal-${a.id}`;
+      return `<div class="account-row">
+        <span class="swatch" style="background:${t.color}"></span>
+        <div class="account-name"><b>${esc(a.name)}</b><span class="small">${t.label}${a.note ? ` · ${esc(a.note)}` : ''}${row && !logged ? ` · last updated ${Calc.label(row.updated, { month: 'short', year: 'numeric' })}` : ''}</span></div>
+        <div class="amount-input"><span>€</span><input id="${id}" inputmode="decimal" autocomplete="off" aria-label="${esc(a.name)} balance in ${monthName(key)}"
+          placeholder="${row ? esc(toInput(row.value)) : '0'}" data-change="balance" data-id="${a.id}" value="${logged ? toInput(entry.balances[a.id]) : ''}"></div>
+        <button class="icon-btn" data-click="edit-account" data-id="${a.id}" aria-label="Edit ${esc(a.name)}" title="Edit">⋯</button>
+      </div>`;
+    }).join('')}
+    ${closed.length ? `<p class="muted small" style="margin-top:12px">Closed or sold: ${closed.map(a => esc(a.name)).join(', ')}</p>` : ''}`;
+
+    return `${head}${hero}
+      <div class="grid-2">
+        ${card('What it\'s made of', composition)}
+        ${card(`Balances at end of ${monthName(key)}`, `<p class="hint">Type this month's balance. Empty fields keep the last known value.</p>${accounts}`,
+          '', '<button class="btn primary small" data-click="add-account">+ Add account</button>')}
+      </div>`;
+  }
+
+  function openAccountDialog(acc) {
+    const a = acc || { name: '', type: 'bank', note: '' };
+    const modal = $('#modal');
+    modal.innerHTML = `<form class="modal-form" data-submit="account">
+      <h2>${acc ? `Edit ${esc(a.name)}` : 'Add an account'}</h2>
+      <input type="hidden" name="id" value="${esc(acc ? acc.id : '')}">
+      <label>Name <input name="name" required value="${esc(a.name)}" placeholder="e.g. ING savings, DEGIRO, Pokémon cards"></label>
+      <label>Type <select name="type">${ACCOUNT_TYPES.map(t => `<option value="${t.id}" ${a.type === t.id ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+      ${acc ? '' : `<label>Balance at end of ${monthName(state.month)} (€) <input name="balance" inputmode="decimal" placeholder="0"></label>`}
+      <label>Note <span class="muted small">(optional)</span> <input name="note" value="${esc(a.note || '')}" placeholder="e.g. value from Cardmarket"></label>
+      ${acc ? `<label class="check"><input type="checkbox" name="closed" ${a.closedMonth ? 'checked' : ''}> Closed or sold (stops counting after ${a.closedMonth ? Calc.label(a.closedMonth) : Calc.label(state.month)})</label>` : ''}
+      <div class="modal-actions">
+        ${acc ? `<button type="button" class="btn ghost danger left" data-click="delete-account" data-id="${acc.id}">Delete</button>` : ''}
+        <button type="button" class="btn ghost" data-click="close-modal">Cancel</button>
+        <button class="btn primary">Save</button>
+      </div>
+    </form>`;
+    modal.showModal();
+    modal.querySelector('input[name=name]').focus();
+  }
+
+  const VIEWS = { overview: overviewView, month: monthView, networth: networthView, recurring: recurringView, budgets: budgetsView, goals: goalsView, data: dataView };
 
   // --------------------------------------------------------------- dialogs
   function confirmDialog(title, text, okLabel = 'OK', danger = false) {
@@ -1023,6 +1231,18 @@
       commit();
     },
 
+    'add-account': () => openAccountDialog(null),
+    'edit-account': el => openAccountDialog(state.data.accounts.find(a => a.id === el.dataset.id)),
+    'delete-account': async el => {
+      const a = state.data.accounts.find(x => x.id === el.dataset.id);
+      $('#modal').close();
+      if (!(await confirmDialog(`Delete ${esc(a.name)}?`, 'All its logged balances are removed too, so your net worth history changes. If you sold it or closed it, tick <b>Closed or sold</b> instead to keep the history.', 'Delete', true))) return;
+      state.data.accounts = state.data.accounts.filter(x => x.id !== a.id);
+      for (const e of Object.values(state.data.months)) if (e.balances) delete e.balances[a.id];
+      commit(`${a.name} deleted.`);
+    },
+    'set-theme': el => { setTheme(el.dataset.theme); render(); },
+
     'close-modal': () => $('#modal').close(),
   };
 
@@ -1061,6 +1281,16 @@
       commit();
     },
     'note': el => { ensureMonth(state.month).note = el.value; commit(); },
+    'balance': el => {
+      const v = readAmount(el);
+      if (v === null) return;
+      const e = ensureMonth(state.month);
+      e.balances ||= {};
+      if (v === undefined) delete e.balances[el.dataset.id];
+      else e.balances[el.dataset.id] = v;
+      commit();
+    },
+    'set-name': el => { state.data.settings.name = el.value.trim(); commit(); },
     'budget': el => {
       const v = readAmount(el);
       if (v === null) return;
@@ -1079,6 +1309,28 @@
 
   const submits = {
     'item': saveItem,
+    'account': form => {
+      const f = new FormData(form);
+      const id = f.get('id');
+      const vals = { name: String(f.get('name')).trim(), type: f.get('type'), note: String(f.get('note') || '').trim() };
+      if (id) {
+        const a = state.data.accounts.find(x => x.id === id);
+        const closed = f.get('closed') === 'on';
+        Object.assign(a, vals, { closedMonth: closed ? (a.closedMonth || state.month) : null });
+      } else {
+        const balance = f.get('balance') ? parseAmount(f.get('balance')) : null;
+        if (Number.isNaN(balance)) return toast('Please enter a valid balance, like 1250,00');
+        const acc = { id: uid(), ...vals, closedMonth: null };
+        state.data.accounts.push(acc);
+        if (balance != null) {
+          const e = ensureMonth(state.month);
+          e.balances ||= {};
+          e.balances[acc.id] = balance;
+        }
+      }
+      $('#modal').close();
+      commit(`${vals.name} saved.`);
+    },
     'goal': form => {
       const f = new FormData(form);
       const target = parseAmount(f.get('target'));
@@ -1162,7 +1414,7 @@
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (window.innerWidth !== lastWidth && state.tab === 'overview') { lastWidth = window.innerWidth; render(); }
+      if (window.innerWidth !== lastWidth && ['overview', 'networth'].includes(state.tab)) { lastWidth = window.innerWidth; render(); }
     }, 150);
   });
 
