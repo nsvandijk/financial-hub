@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Financial Hub</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M9 22V14M16 22V9M23 22V17' stroke='white' stroke-width='3' stroke-linecap='round'/></svg>">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#2a78d6">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M9 22V14M16 22V9M23 22V17"/></svg>
+      <span>Financial Hub</span>
+    </div>
+    <div id="month-nav" class="month-nav" hidden>
+      <button class="icon-btn" data-click="prev-month" aria-label="Previous month">&#8249;</button>
+      <span id="month-label" class="month-label"></span>
+      <button class="icon-btn" data-click="next-month" aria-label="Next month">&#8250;</button>
+      <button class="btn ghost small" data-click="this-month">Today</button>
+    </div>
+    <div id="status" class="status"></div>
+  </header>
+
+  <nav id="tabs" class="tabs" hidden>
+    <button data-click="tab" data-tab="overview">Overview</button>
+    <button data-click="tab" data-tab="month">Log month</button>
+    <button data-click="tab" data-tab="recurring">Fixed &amp; subscriptions</button>
+    <button data-click="tab" data-tab="budgets">Budgets</button>
+    <button data-click="tab" data-tab="goals">Goals</button>
+    <button data-click="tab" data-tab="data">Data &amp; sync</button>
+  </nav>
+
+  <main id="view"></main>
+
+  <dialog id="modal"></dialog>
+  <input type="file" id="import-file" accept=".json,application/json" hidden>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <!-- Plain scripts in a fixed order, no build step -->
+  <script src="js/config.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/calc.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/example.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

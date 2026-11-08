@@ -1,0 +1,5 @@
+# Never commit personal financial data
+finance-data*.json
+financial-hub-data*.json
+financial-hub-backup*.json
+*.backup.json
