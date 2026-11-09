@@ -8,20 +8,23 @@
  *
  * Sign-in uses Google Identity Services. The app asks for the "drive.file"
  * permission: it can only see files it created itself, never the rest of your Drive.
- * Google gives the app a temporary access token (valid ~1 hour); after that,
- * one tap on "Sign in" gets a fresh one.
+ * Google gives the app a temporary access token (valid ~1 hour). It's kept in this
+ * browser's localStorage, so refreshing the page doesn't ask you to sign in again.
+ * After the hour is up, one tap on "Sign in" gets a fresh one.
  */
 const DataStore = (() => {
   const SCOPE = 'https://www.googleapis.com/auth/drive.file';
   const FILE_NAME = 'financial-hub-data.json';
   const LS_DATA = 'financialHub.data.v1';
   const LS_SYNC = 'financialHub.sync.v1';
+  const LS_TOKEN = 'financialHub.token.v1';
   const API = 'https://www.googleapis.com/drive/v3/files';
   const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 
   let token = null;
   let tokenExpiry = 0;
   let gisPromise = null;
+  restoreToken();
 
   // ---- sync bookkeeping (per device) ----
   // fileId: the Drive file; version: Drive's version number we last saw;
@@ -38,11 +41,24 @@ const DataStore = (() => {
     writeJson(LS_SYNC, sync);
   }
 
+  // ---- access token (survives a page refresh until it expires) ----
+  function restoreToken() {
+    const t = readJson(LS_TOKEN);
+    if (t && t.token && Date.now() < t.expiry) { token = t.token; tokenExpiry = t.expiry; }
+  }
+  function saveToken() { writeJson(LS_TOKEN, { token, expiry: tokenExpiry }); }
+  function forgetToken() {
+    token = null;
+    tokenExpiry = 0;
+    try { localStorage.removeItem(LS_TOKEN); } catch (e) { /* ignore */ }
+  }
+
   // ---- local copy ----
   const loadLocal = () => readJson(LS_DATA);
   const saveLocal = data => writeJson(LS_DATA, data);
   function clearLocal() {
     try { localStorage.removeItem(LS_DATA); localStorage.removeItem(LS_SYNC); } catch (e) { /* ignore */ }
+    forgetToken();
     sync = {};
   }
 
@@ -83,6 +99,7 @@ const DataStore = (() => {
           }
           token = resp.access_token;
           tokenExpiry = Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000;
+          saveToken();
           setSync({ signedInBefore: true });
           resolve();
         },
@@ -102,8 +119,7 @@ const DataStore = (() => {
     if (token && window.google && google.accounts && google.accounts.oauth2) {
       try { google.accounts.oauth2.revoke(token, () => {}); } catch (e) { /* ignore */ }
     }
-    token = null;
-    tokenExpiry = 0;
+    forgetToken();
   }
 
   // ---- Google Drive API ----
@@ -116,7 +132,7 @@ const DataStore = (() => {
   async function api(url, opts = {}) {
     if (!hasToken()) throw authError();
     const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` } });
-    if (res.status === 401) { token = null; throw authError(); }
+    if (res.status === 401) { forgetToken(); throw authError(); }
     if (!res.ok) {
       const e = new Error(`Google Drive error ${res.status}`);
       e.status = res.status;

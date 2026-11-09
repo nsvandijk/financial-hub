@@ -1407,6 +1407,8 @@
   });
 
   window.addEventListener('focus', checkForOutsideChanges);
+  // While the app is open on screen, look for changes from your other devices every minute.
+  setInterval(() => { if (!document.hidden) checkForOutsideChanges(); }, 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForOutsideChanges(); });
 
   let lastWidth = window.innerWidth;
@@ -1430,6 +1432,8 @@
       state.conn = 'local';
     }
     render();
+    // Still signed in from before the refresh? Sync straight away, no sign-in needed.
+    if (state.conn === 'signin' && DataStore.hasToken()) syncNow();
   }
 
   boot();
