@@ -61,11 +61,11 @@ Plain JavaScript, no build step and no dependencies, so it's easy to read and ch
 
 ## Backups
 
-**Data & sync → Export backup** downloads a copy of everything. Google Drive also keeps version history of `finance-data.json`.
+Once a month the app copies your data into a **Financial Hub backups** folder in your Google Drive and keeps the newest 12. **Settings → Backups in Google Drive** lists them, with **Restore** (which first saves a copy of your current data) and **Back up now**. **Settings → Export backup** downloads a copy as a file.
 
 ## Ideas for later
 
 - Import bank CSV exports for automatic categorisation
-- Net worth tracking (accounts, investments)
-- Yearly overview / annual report
-- Put the code in git and on GitHub (great next learning step)
+- A savings pot for yearly and quarterly bills
+- Monthly check-in reminder
+- Price history for subscriptions

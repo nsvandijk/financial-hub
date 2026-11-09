@@ -463,3 +463,10 @@ dialog::backdrop { background: rgba(30, 24, 16, 0.32); backdrop-filter: blur(3px
 .nw-hero-card { margin-bottom: 18px; }
 .welcome-inline { max-width: 620px; padding: 8px 4px; }
 .welcome-inline h2 { font-family: var(--font-display); font-weight: 500; font-size: 24px; letter-spacing: -0.01em; }
+
+/* ------------------------------------------------------------ year view */
+.head-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.table tfoot th { color: var(--text); font-weight: 600; border-top: 1px solid var(--grid); border-bottom: 0; }
+.table tr.current-row td { background: var(--accent-soft); }
+.link-btn { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--accent-ink); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }

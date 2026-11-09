@@ -98,10 +98,14 @@
 
   // ----------------------------------------------------------------- state
   const TAB_KEY = 'financialHub.tab';
+  const HOME_MODE_KEY = 'financialHub.homeMode';
   const state = {
     data: null,
     tab: (() => { try { return localStorage.getItem(TAB_KEY) || 'overview'; } catch (e) { return 'overview'; } })(),
     month: Calc.monthKey(),
+    homeMode: (() => { try { return localStorage.getItem(HOME_MODE_KEY) === 'year' ? 'year' : 'month'; } catch (e) { return 'month'; } })(),
+    year: new Date().getFullYear(),
+    backups: null, // the list of Drive backups shown in Settings (loaded when you open it)
     // 'drive'  = signed in, changes go to Google Drive
     // 'signin' = not signed in (yet): working from the copy on this device
     // 'local'  = Google sign-in not set up (no client ID in js/config.js)
@@ -184,10 +188,21 @@
       }
       state.conn = 'drive';
       state.saveState = 'saved';
+      autoBackup();
     } catch (e) {
       handleSyncError(e);
     }
     render();
+  }
+
+  /** Once a month, keep a copy of your data in the "Financial Hub backups" folder in Drive. */
+  async function autoBackup() {
+    if (!state.data || state.data.isExample) return;
+    try {
+      if (await DataStore.ensureMonthlyBackup(Calc.monthKey())) state.backups = null; // refresh the list in Settings
+    } catch (e) {
+      console.warn('Monthly backup failed', e);
+    }
   }
 
   async function takeRemote(info) {
@@ -375,7 +390,129 @@
     return `<span class="delta ${good ? 'good' : 'bad'}">${d > 0 ? '▲' : '▼'} ${formatter(Math.abs(d))} vs ${monthShort(prevKey)}</span>`;
   }
 
+  // Home has two modes: one month, or a whole year.
+  function homeHead(title, sub, switcher) {
+    const toggle = `<div class="segmented" role="group" aria-label="Show one month or a whole year">
+      ${['month', 'year'].map(m => `<button data-click="home-mode" data-mode="${m}" class="${state.homeMode === m ? 'active' : ''}" aria-pressed="${state.homeMode === m}">${m === 'month' ? 'Month' : 'Year'}</button>`).join('')}
+    </div>`;
+    return `<header class="page-head"><div><h1 class="greeting">${title}</h1>${sub ? `<p class="page-sub">${sub}</p>` : ''}</div>
+      <div class="head-controls">${toggle}${switcher}</div></header>`;
+  }
+  function yearSwitch() {
+    const thisYear = Number(Calc.monthKey().slice(0, 4));
+    return `<div class="month-switch" role="group" aria-label="Choose year">
+      <button class="icon-btn" data-click="prev-year" aria-label="Previous year">‹</button>
+      <span class="label">${state.year}</span>
+      <button class="icon-btn" data-click="next-year" aria-label="Next year" ${state.year >= thisYear ? 'disabled' : ''}>›</button>
+      ${state.year === thisYear ? '' : '<button class="btn ghost small today" data-click="this-year">This year</button>'}
+    </div>`;
+  }
+
+  function yearView(mounts) {
+    const d = state.data;
+    const today = Calc.monthKey();
+    const y = state.year;
+    const Y = Calc.year(d, y, today);
+    const isCurrent = y === Number(today.slice(0, 4));
+
+    if (!Y.count) {
+      return homeHead(`${y} at a glance`, '', yearSwitch()) +
+        card('', `<p class="muted">There's no data for ${y}. Your overview starts in ${Calc.label(Calc.firstMonth(d, today))}.</p>`);
+    }
+
+    const firstKey = Y.months[0].key, lastKey = Y.months[Y.count - 1].key;
+    const span = Y.count === 12 ? 'all 12 months' : Y.count === 1 ? monthName(firstKey) : `${monthShort(firstKey)}–${monthShort(lastKey)}`;
+    // Compare with the same months of the year before, but only if those months all have data.
+    const P = Calc.year(d, y - 1, today, Number(lastKey.slice(5)));
+    const comparable = P.count === Y.count;
+    const prevLabel = Y.count === 12 ? String(y - 1) : `${span} ${y - 1}`;
+    const yDelta = (cur, prev, upIsGood, formatter = fmt0) => {
+      if (!comparable) return '';
+      const diff = cur - prev;
+      if (Math.abs(diff) < 0.5) return `<span class="delta">Same as ${prevLabel}</span>`;
+      return `<span class="delta ${(diff > 0) === upIsGood ? 'good' : 'bad'}">${diff > 0 ? '▲' : '▼'} ${formatter(Math.abs(diff))} vs ${prevLabel}</span>`;
+    };
+
+    let html = homeHead(`${y} at a glance`,
+      isCurrent ? `${y} so far: ${span}. Future months aren't counted yet.` : `Looking back at ${y} (${span}).`, yearSwitch());
+
+    html += `<section class="kpis">
+      ${kpi('Income', fmt0(Y.income), yDelta(Y.income, P.income, true), { color: 'var(--series-1)' })}
+      ${kpi('Expenses', fmt0(Y.expenses), yDelta(Y.expenses, P.expenses, false), { color: 'var(--series-2)' })}
+      ${kpi(Y.saved >= 0 ? 'Saved' : 'Overspent', fmt0(Math.abs(Y.saved)), comparable ? yDelta(Y.saved, P.saved, true) : `${fmt0(Y.avgSaved)} per month on average`, { color: 'var(--series-4)' })}
+      ${kpi('Savings rate', pct(Y.rate), comparable && Y.rate != null && P.rate != null ? yDelta(Y.rate * 100, P.rate * 100, true, v => `${Math.round(v)} pts`) : '')}
+    </section>`;
+
+    // Highlights
+    const best = Y.months.reduce((a, b) => (b.saved > a.saved ? b : a));
+    const worst = Y.months.reduce((a, b) => (b.saved < a.saved ? b : a));
+    const cats = Object.entries(Y.byCategory).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    const notes = [];
+    notes.push({ tone: 'info', text: `On average you saved <b>${fmt0(Y.avgSaved)}</b> and spent <b>${fmt0(Y.expenses / Y.count)}</b> per month.` });
+    if (Y.count > 1) {
+      notes.push({ tone: 'good', text: `Best month: <b>${monthName(best.key)}</b>, ${best.saved >= 0 ? 'saved' : 'overspent'} ${fmt0(Math.abs(best.saved))}.` });
+      if (worst.key !== best.key) notes.push({ tone: worst.saved < 0 ? 'bad' : 'warn', text: `Toughest month: <b>${monthName(worst.key)}</b>, ${worst.saved >= 0 ? `saved only ${fmt0(worst.saved)}` : `overspent ${fmt0(-worst.saved)}`}.` });
+    }
+    if (cats.length && Y.expenses > 0) notes.push({ tone: 'info', text: `Your biggest cost was <b>${esc(catName(cats[0][0]))}</b>: ${fmt0(cats[0][1])}, or ${Math.round((cats[0][1] / Y.expenses) * 100)}% of everything you spent.` });
+    const unlogged = Y.months.filter(m => !m.logged && m.key < today).length;
+    if (unlogged) notes.push({ tone: 'warn', text: `${unlogged} month${unlogged > 1 ? 's have' : ' has'} only fixed items, no variable spending logged. The real spending was probably a bit higher.` });
+    const notesHtml = `<ul class="insights">${notes.map(i => `<li class="insight ${i.tone}">${icon(i.tone)}<span>${i.text}</span></li>`).join('')}</ul>`;
+
+    // Spending per category for the year
+    const maxCat = cats.length ? cats[0][1] : 1;
+    const catHtml = cats.length ? `<div class="cat-list">${cats.map(([id, v]) => `<div class="cat-row">
+        <div class="row-between"><span>${esc(catName(id))} <span class="muted small">${Math.round((v / (Y.expenses || 1)) * 100)}%</span></span>
+          <span class="num">${fmt0(v)} <span class="muted small">· ${fmt0(v / Y.count)}/mo</span></span></div>
+        <div class="meter" title="${esc(catName(id))}: ${fmt(v)}"><div class="meter-fill" style="width:${(v / maxCat) * 100}%"></div></div>
+      </div>`).join('')}</div>` : `<p class="muted">Nothing spent in ${y}.</p>`;
+
+    html += `<div class="grid-2">${card('Highlights', notesHtml)}${card(`Where your money went in ${y}`, catHtml)}</div>`;
+
+    // Month by month
+    const labels = Y.months.map(m => monthShort(m.key));
+    const full = Y.months.map(m => Calc.label(m.key));
+    html += card(`Month by month in ${y}`, `
+      <div id="chart-year"></div>
+      <h3 class="chart-title">Saved per month</h3>
+      <div id="chart-year-saved"></div>
+      <details class="table-toggle"><summary>Show as table</summary>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>Month</th><th class="num">Income</th><th class="num">Expenses</th><th class="num">Saved</th><th class="num">Rate</th></tr></thead>
+          <tbody>${Y.months.map(m => `<tr><td>${Calc.label(m.key)}</td><td class="num">${fmt(m.income)}</td><td class="num">${fmt(m.expenses)}</td><td class="num">${fmt(m.saved)}</td><td class="num">${pct(m.rate)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><th>Total</th><th class="num">${fmt(Y.income)}</th><th class="num">${fmt(Y.expenses)}</th><th class="num">${fmt(Y.saved)}</th><th class="num">${pct(Y.rate)}</th></tr></tfoot>
+        </table></div>
+      </details>`);
+    mounts.push(() => {
+      Charts.bars($('#chart-year'), {
+        labels, fullLabels: full, format: fmt, axisFormat: v => compact.format(v),
+        series: [
+          { name: 'Income', color: 'var(--series-1)', values: Y.months.map(m => m.income) },
+          { name: 'Expenses', color: 'var(--series-2)', values: Y.months.map(m => m.expenses) },
+        ],
+      });
+      Charts.bars($('#chart-year-saved'), {
+        labels, fullLabels: full, format: fmt, axisFormat: v => compact.format(v), height: 170,
+        series: [{ name: 'Saved', color: 'var(--series-4)', values: Y.months.map(m => m.saved) }],
+        tooltipExtra: i => `Savings rate: ${pct(Y.months[i].rate)}`,
+      });
+    });
+
+    // All years side by side
+    const all = Calc.years(d, today).map(yy => Calc.year(d, yy, today)).filter(x => x.count).reverse();
+    if (all.length > 1) {
+      html += card('All years', `<div class="table-wrap"><table class="table">
+        <thead><tr><th>Year</th><th class="num">Months</th><th class="num">Income</th><th class="num">Expenses</th><th class="num">Saved</th><th class="num">Rate</th><th class="num">Saved / month</th></tr></thead>
+        <tbody>${all.map(x => `<tr class="${x.year === y ? 'current-row' : ''}">
+          <td><button class="link-btn" data-click="set-year" data-year="${x.year}">${x.year}</button></td>
+          <td class="num">${x.count}</td><td class="num">${fmt0(x.income)}</td><td class="num">${fmt0(x.expenses)}</td>
+          <td class="num">${fmt0(x.saved)}</td><td class="num">${pct(x.rate)}</td><td class="num">${fmt0(x.avgSaved)}</td></tr>`).join('')}</tbody>
+      </table></div>`);
+    }
+    return html;
+  }
+
   function overviewView(mounts) {
+    if (state.homeMode === 'year') return yearView(mounts);
     const d = state.data;
     const key = state.month;
     const m = Calc.month(d, key);
@@ -396,7 +533,7 @@
     }
 
     const isNow = key === Calc.monthKey();
-    html = pageHead(greeting(), isNow ? `Here's how ${monthName(key)} is going.` : `Looking back at ${Calc.label(key)}.`, true, 'greeting') + html;
+    html = homeHead(greeting(), isNow ? `Here's how ${monthName(key)} is going.` : `Looking back at ${Calc.label(key)}.`, monthSwitch()) + html;
 
     // Hero: what you saved this month, with the last 6 months as small bars
     const recent = Calc.history(d, key, 6);
@@ -950,7 +1087,15 @@
             <li><b>Android:</b> open it in Chrome → ⋮ menu → <i>Add to Home screen</i>.</li>
           </ul>
         </div>`)}
-      ${card('Backup', `<p>Download a copy of everything as a JSON file, or restore from one.</p>
+      ${card('Backups in Google Drive', state.conn === 'drive' ? `
+        <p>Once a month a copy of your data is saved in the <b>Financial Hub backups</b> folder in your Drive. The newest 12 are kept.
+          Made a mistake? Restore an earlier copy here.</p>
+        <div id="backup-list">${backupListHtml()}</div>
+        <div class="button-row">
+          <button class="btn" data-click="backup-now">Back up now</button>
+          ${DataStore.backupFolderUrl() ? `<a class="btn ghost" href="${DataStore.backupFolderUrl()}" target="_blank" rel="noopener">Open backups folder</a>` : ''}
+        </div>` : `<p class="muted">Sign in to see and restore your backups.</p>`)}
+      ${card('Backup file', `<p>Download a copy of everything as a JSON file, or restore from one.</p>
         <div class="button-row"><button class="btn" data-click="export">Export backup</button><button class="btn" data-click="import">Import backup…</button></div>`)}
       ${card('Example data & reset', `
         <div class="button-row">
@@ -958,6 +1103,37 @@
           <button class="btn danger" data-click="reset-all">Erase all data</button>
         </div>
         <p class="muted small">Both of these replace your current data${state.conn !== 'local' ? ', including the copy in Google Drive' : ''}. Export a backup first if you want to keep it.</p>`)}`;
+  }
+
+  // state.backups: null = not loaded yet, 'loading', 'error', or the list from Drive.
+  function backupListHtml() {
+    const b = state.backups;
+    if (b == null || b === 'loading') {
+      if (b == null) loadBackups();
+      return `<p class="muted small">Loading backups…</p>`;
+    }
+    if (b === 'error') return `<p class="muted small">Couldn't load your backups. <button class="btn ghost small" data-click="reload-backups">Try again</button></p>`;
+    if (!b.length) return `<p class="muted small">No backups yet. The first one is made automatically, or tap <b>Back up now</b>.</p>`;
+    const when = t => new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return `<div class="table-wrap"><table class="table">
+      <thead><tr><th>Backup</th><th>Made on</th><th></th></tr></thead>
+      <tbody>${b.map(x => `<tr>
+        <td>${x.kind === 'auto' && x.month ? `Monthly · ${esc(Calc.label(x.month))}` : 'Made by hand'}</td>
+        <td class="small">${esc(when(x.createdTime))}</td>
+        <td class="actions"><button class="btn ghost small" data-click="restore-backup" data-id="${esc(x.id)}" data-when="${esc(when(x.createdTime))}">Restore</button></td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  async function loadBackups() {
+    state.backups = 'loading';
+    try {
+      state.backups = await DataStore.listBackups();
+    } catch (e) {
+      console.warn(e);
+      state.backups = 'error';
+      if (e.auth) { state.backups = null; state.conn = 'signin'; }
+    }
+    if (state.tab === 'data') scheduleRender();
   }
 
   // -------------------------------------------------------------- theme
@@ -1146,6 +1322,16 @@
     'prev-month': () => { state.month = Calc.addMonths(state.month, -1); render(); },
     'next-month': () => { state.month = Calc.addMonths(state.month, 1); render(); },
     'this-month': () => { state.month = Calc.monthKey(); render(); },
+    'home-mode': el => {
+      state.homeMode = el.dataset.mode;
+      if (state.homeMode === 'year') state.year = Number(state.month.slice(0, 4));
+      try { localStorage.setItem(HOME_MODE_KEY, state.homeMode); } catch (e) { /* ignore */ }
+      render();
+    },
+    'prev-year': () => { state.year -= 1; render(); },
+    'next-year': () => { state.year = Math.min(state.year + 1, Number(Calc.monthKey().slice(0, 4))); render(); },
+    'this-year': () => { state.year = Number(Calc.monthKey().slice(0, 4)); render(); },
+    'set-year': el => { state.year = Number(el.dataset.year); render(); window.scrollTo(0, 0); },
 
     'sign-in': signIn,
     'sync-now': syncNow,
@@ -1179,6 +1365,37 @@
     },
     'export': () => DataStore.downloadBackup(state.data, `financial-hub-backup-${new Date().toISOString().slice(0, 10)}.json`),
     'import': () => $('#import-file').click(),
+    'reload-backups': () => { state.backups = null; render(); },
+    'backup-now': async el => {
+      el.disabled = true;
+      try {
+        if (DataStore.getSync().dirty) await DataStore.upload(state.data); // back up what you see, not an older copy
+        await DataStore.createBackup('manual', Calc.monthKey());
+        toast('Backup saved in your Google Drive.');
+      } catch (e) {
+        console.error(e);
+        toast(e.auth ? 'Please sign in again first.' : "Couldn't make a backup. Try again in a moment.");
+      }
+      state.backups = null;
+      render();
+    },
+    'restore-backup': async el => {
+      if (!(await confirmDialog('Restore this backup?',
+        `Your data goes back to how it was on <b>${esc(el.dataset.when)}</b>. A copy of your current data is saved as a backup first, so you can undo this.`,
+        'Restore'))) return;
+      try {
+        if (DataStore.getSync().dirty) await DataStore.upload(state.data);
+        await DataStore.createBackup('manual', Calc.monthKey()); // safety copy of the current data
+        const data = await DataStore.readBackup(el.dataset.id);
+        if (!isValid(data)) return toast("That backup couldn't be read.");
+        useData(data);
+        state.backups = null;
+        commit(`Restored the backup from ${el.dataset.when}.`);
+      } catch (e) {
+        console.error(e);
+        toast(e.auth ? 'Please sign in again first.' : "Couldn't restore the backup. Nothing was changed.");
+      }
+    },
     'reset-all': async () => {
       if (!(await confirmDialog('Erase all data?', 'This deletes all income, expenses, budgets and goals. It cannot be undone (unless you have a backup).', 'Erase everything', true))) return;
       state.data = emptyData();

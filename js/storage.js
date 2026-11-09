@@ -192,6 +192,89 @@ const DataStore = (() => {
     setSync({ fileId: f.id, version: String(f.version), dirty: false });
   }
 
+  // ---- backups in Google Drive ----
+  // Copies of the data file in a "Financial Hub backups" folder. One is made automatically
+  // each month (the newest 12 are kept); you can also make one by hand. Old ones go to
+  // the Drive trash, so they can still be recovered for 30 days.
+  const BACKUP_FOLDER = 'Financial Hub backups';
+  const FOLDER_MIME = 'application/vnd.google-apps.folder';
+  const KEEP_AUTO = 12;
+
+  async function backupFolderId() {
+    if (sync.backupFolderId) {
+      try {
+        const f = await (await api(`${API}/${sync.backupFolderId}?fields=id,trashed`)).json();
+        if (!f.trashed) return f.id;
+      } catch (e) {
+        if (e.auth || e.status !== 404) throw e;
+      }
+    }
+    const q = encodeURIComponent(`name='${BACKUP_FOLDER}' and mimeType='${FOLDER_MIME}' and trashed=false`);
+    const { files } = await (await api(`${API}?q=${q}&spaces=drive&fields=files(id)`)).json();
+    let id = files && files.length ? files[0].id : null;
+    if (!id) {
+      const res = await api(`${API}?fields=id`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: BACKUP_FOLDER, mimeType: FOLDER_MIME }),
+      });
+      id = (await res.json()).id;
+    }
+    setSync({ backupFolderId: id });
+    return id;
+  }
+
+  /** All backups, newest first: [{ id, name, createdTime, kind: 'auto'|'manual', month }]. */
+  async function listBackups() {
+    const q = encodeURIComponent(`appProperties has { key='fhBackup' and value='1' } and trashed=false`);
+    const res = await api(`${API}?q=${q}&spaces=drive&orderBy=createdTime desc&pageSize=200&fields=files(id,name,createdTime,appProperties)`);
+    const { files } = await res.json();
+    return (files || []).map(f => ({
+      id: f.id, name: f.name, createdTime: f.createdTime,
+      kind: (f.appProperties && f.appProperties.fhKind) || 'manual',
+      month: f.appProperties && f.appProperties.fhMonth,
+    }));
+  }
+
+  /** Copies the current Drive file into the backups folder. kind: 'auto' (monthly) or 'manual'. */
+  async function createBackup(kind, month) {
+    if (!sync.fileId) throw new Error('There is no data in Google Drive to back up yet.');
+    const folder = await backupFolderId();
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '.');
+    const name = kind === 'auto' ? `financial-hub-backup ${month} (monthly).json` : `financial-hub-backup ${stamp}.json`;
+    const res = await api(`${API}/${sync.fileId}/copy?fields=id,name,createdTime`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, parents: [folder], appProperties: { fhBackup: '1', fhKind: kind, fhMonth: month } }),
+    });
+    return res.json();
+  }
+
+  const trash = id => api(`${API}/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }),
+  });
+
+  /** Makes this month's automatic backup if there isn't one yet, and trashes automatic ones beyond the newest 12. */
+  async function ensureMonthlyBackup(month) {
+    if (sync.lastAutoBackup === month) return false; // this device already checked this month
+    const autos = (await listBackups()).filter(b => b.kind === 'auto');
+    let made = false;
+    if (!autos.some(b => b.month === month)) {
+      await createBackup('auto', month);
+      autos.unshift({ month });
+      made = true;
+    }
+    autos.sort((a, b) => String(b.month).localeCompare(String(a.month)));
+    for (const old of autos.slice(KEEP_AUTO)) if (old.id) await trash(old.id).catch(e => console.warn('Could not remove old backup', e));
+    setSync({ lastAutoBackup: month });
+    return made;
+  }
+
+  async function readBackup(id) {
+    const text = await (await api(`${API}/${id}?alt=media`)).text();
+    return JSON.parse(text);
+  }
+
+  const backupFolderUrl = () => (sync.backupFolderId ? `https://drive.google.com/drive/folders/${sync.backupFolderId}` : null);
+
   // ---- manual backup ----
   function downloadBackup(data, filename) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -215,5 +298,6 @@ const DataStore = (() => {
     markDirty: () => setSync({ dirty: true }),
     fileUrl: () => (sync.fileId ? `https://drive.google.com/file/d/${sync.fileId}/view` : null),
     downloadBackup, readUpload,
+    listBackups, createBackup, ensureMonthlyBackup, readBackup, backupFolderUrl,
   };
 })();

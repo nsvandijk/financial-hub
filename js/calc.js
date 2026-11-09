@@ -133,6 +133,44 @@ const Calc = (() => {
     return out;
   }
 
+  // ---- one year ----
+  /**
+   * Totals for a calendar year, counting only months that have happened (up to `today`)
+   * and not before your first month with data. `lastMonthNum` (1–12) cuts the year off
+   * early, which is used to compare "Jan–Nov this year" with "Jan–Nov last year".
+   */
+  function year(data, y, today, lastMonthNum = 12) {
+    const first = firstMonth(data, today);
+    const months = [];
+    for (let mo = 1; mo <= lastMonthNum; mo++) {
+      const k = `${y}-${String(mo).padStart(2, '0')}`;
+      if (k > today || k < first) continue;
+      months.push(month(data, k));
+    }
+    const byCategory = {};
+    let income = 0, expenses = 0;
+    for (const m of months) {
+      income += m.income;
+      expenses += m.expenses;
+      for (const [c, v] of Object.entries(m.byCategory)) byCategory[c] = (byCategory[c] || 0) + v;
+    }
+    const saved = income - expenses;
+    return {
+      year: y, months, count: months.length, income, expenses, saved, byCategory,
+      rate: income > 0 ? saved / income : null,
+      avgSaved: months.length ? saved / months.length : 0,
+    };
+  }
+
+  /** Every calendar year that has data, oldest first. */
+  function years(data, today) {
+    const from = Number(firstMonth(data, today).slice(0, 4));
+    const to = Number(today.slice(0, 4));
+    const out = [];
+    for (let y = from; y <= to; y++) out.push(y);
+    return out;
+  }
+
   // ---- goals ----
   function goalProgress(data, goal, key) {
     let saved = num(goal.startAmount);
@@ -207,7 +245,7 @@ const Calc = (() => {
   }
 
   return {
-    FREQ_MONTHS, num, monthKey, addMonths, diff, label, isActive, isDue, perMonth, month, firstMonth, history, goalProgress,
+    FREQ_MONTHS, num, monthKey, addMonths, diff, label, isActive, isDue, perMonth, month, firstMonth, history, year, years, goalProgress,
     netWorth, netWorthHistory, firstBalanceMonth,
   };
 })();
