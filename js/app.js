@@ -611,6 +611,7 @@
           ${l.overridden ? `<span class="pill changed">changed this month · usually ${fmt(l.usual)}</span>` : ''}</label>
         <div class="amount-input"><span>€</span><input id="${id}" inputmode="decimal" autocomplete="off" data-change="override" data-id="${l.item.id}" value="${toInput(l.amount)}"></div>
         ${l.overridden ? `<button class="icon-btn" data-click="reset-override" data-id="${l.item.id}" title="Back to usual amount" aria-label="Reset ${esc(l.item.name)} to usual amount">↺</button>` : '<span class="icon-spacer"></span>'}
+        <button class="icon-btn" data-click="edit-item" data-id="${l.item.id}" title="Edit ${esc(l.item.name)} (amount, start or end month)" aria-label="Edit ${esc(l.item.name)}">✎</button>
       </div>`;
     };
 
@@ -756,7 +757,7 @@
       <label class="check expense-only"><input type="checkbox" name="subscription" ${it.subscription ? 'checked' : ''}> This is a subscription (streaming, apps, gym…)</label>
       <div class="row2">
         <label>Starts <input type="month" name="startMonth" required value="${esc(it.startMonth || state.month)}"></label>
-        <label>Ends <span class="muted small">(optional)</span> <input type="month" name="endMonth" value="${esc(it.endMonth || '')}"></label>
+        <label>Ends <span class="muted small">(optional, last month it counts)</span> <input type="month" name="endMonth" value="${esc(it.endMonth || '')}"></label>
       </div>
       ${editing ? `<label>A new amount or frequency applies from <input type="month" name="applyFrom" value="${esc(state.month > it.startMonth ? state.month : it.startMonth)}">
         <span class="muted small">Earlier months keep the old amount, so your history stays correct (handy for a raise or price increase).</span></label>` : ''}
